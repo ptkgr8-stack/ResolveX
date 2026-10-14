@@ -5,8 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.issue import router as issues_router
 from app.core.database import Base, engine
-from app.models.issue import Issue
-
+from app.models import Issue, User
+from app.api.auth import router as auth_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -37,6 +37,8 @@ allow_origins=[
 )
 
 app.include_router(issues_router)
+app.include_router(auth_router)
+
 
 
 @app.get("/")
