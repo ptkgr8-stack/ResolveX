@@ -1,5 +1,5 @@
 {
-  "name": "CampusIQ — Infrastructure Intelligence",
+  "name": "ResolveX",
   "description": "Turn Campus Problems Into Intelligent Action with AI-powered classification, smart priority scoring, automated routing, and predictive maintenance.",
   "requestFramePermissions": ["geolocation"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

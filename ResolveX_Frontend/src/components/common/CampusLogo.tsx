@@ -44,7 +44,7 @@ export const CampusLogo: React.FC<CampusLogoProps> = ({
             size === 'sm' ? 'text-sm' : size === 'lg' ? 'text-xl' : 'text-base'
           } ${isLight ? 'text-white' : 'text-[#0b1f44]'}`}
         >
-          CampusIQ
+          ResolveX
         </span>
         <span
           className={`font-mono font-medium tracking-wider uppercase leading-none mt-1 ${

@@ -77,7 +77,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-extrabold text-base tracking-tight text-slate-900 leading-none">
-                  Campus Facilities
+                  ResolveX
                 </span>
                 <span className="px-2 py-0.5 rounded-md border border-slate-200 bg-slate-50 text-[11px] font-medium text-slate-500 leading-none">
                   Ops Portal
@@ -151,7 +151,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           <div className="hidden xs:block">
             <div className="flex items-center gap-2">
               <span className="font-extrabold text-base tracking-tight text-slate-900 leading-none">
-                Campus Facilities
+                ResolveX
               </span>
               <span className="px-2 py-0.5 rounded-md border border-slate-200 bg-slate-50 text-[11px] font-medium text-slate-500 leading-none">
                 Ops Portal
@@ -219,7 +219,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             {showNotifications && (
               <div className="absolute right-0 mt-2 w-80 bg-white text-slate-800 rounded-xl shadow-lg border border-slate-200 p-3 z-50 animate-fade-in text-xs">
                 <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                  <span className="font-bold text-slate-900">Campus Facilities Notices</span>
+                  <span className="font-bold text-slate-900">ResolveX Notices</span>
                   <span className="text-[11px] text-slate-500 font-medium">2 unread</span>
                 </div>
                 <div className="divide-y divide-slate-100 mt-1 max-h-64 overflow-y-auto">

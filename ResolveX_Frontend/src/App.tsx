@@ -121,7 +121,7 @@ export default function App() {
         onLogout={() => {
           setCurrentUser(null);
           setCurrentView('landing');
-          showToast('Signed out of CampusIQ.');
+          showToast('Signed out of ResolveX.');
         }}
         onSwitchRole={handleSwitchRole}
       />
@@ -185,7 +185,7 @@ export default function App() {
                 onLoginSuccess={(user) => {
                   setCurrentUser(user);
                   setCurrentView(user.role === 'admin' ? 'admin-dashboard' : 'student-dashboard');
-                  showToast(`Welcome to CampusIQ, ${user.name}!`);
+                  showToast(`Welcome to ResolveX, ${user.name}!`);
                 }}
                 onClose={() => setCurrentView('landing')}
               />
@@ -319,7 +319,7 @@ export default function App() {
                 </div>
                 <div>
                   <span className="font-bold text-sm text-slate-900 tracking-tight block">
-                    CampusIQ Facilities Management
+                    ResolveX Facilities Management
                   </span>
                   <span className="text-[11px] text-slate-500">
                     Physical Plant &amp; Infrastructure Intelligence Operations
@@ -341,7 +341,7 @@ export default function App() {
 
             <div className="flex flex-col sm:flex-row items-center justify-between gap-3 text-slate-400 text-[11px]">
               <div>
-                &copy; 2026 CampusIQ Infrastructure Intelligence.
+                &copy; 2026 ResolveX Infrastructure Intelligence.
               </div>
               <div className="flex items-center gap-3">
                 <span>Telemetry Grid v4.2</span>

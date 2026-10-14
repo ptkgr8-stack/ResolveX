@@ -612,7 +612,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 An AI assistant that never stops watching.
               </h2>
               <p className="text-sm sm:text-base text-slate-600 leading-relaxed pt-1">
-                CampusIQ continuously analyzes issue patterns, surfaces anomalies, and recommends preventive action — embedded directly into your operations dashboard.
+                ResolveX continuously analyzes issue patterns, surfaces anomalies, and recommends preventive action — embedded directly into your operations dashboard.
               </p>
             </div>
 
@@ -765,7 +765,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               </svg>
             </div>
             <div className="flex items-center gap-1.5 text-xs text-slate-700">
-              <span className="font-bold text-slate-900">CampusIQ</span>
+              <span className="font-bold text-slate-900">ResolveX</span>
               <span className="text-slate-400 font-mono text-[11px]">
                 © 2026 — Infrastructure Intelligence
               </span>
@@ -775,7 +775,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           <div className="flex items-center gap-6 text-xs text-slate-500 font-medium">
             <button
               type="button"
-              onClick={() => alert('CampusIQ Privacy Policy: End-to-end data encryption and strict campus privacy compliance.')}
+              onClick={() => alert('ResolveX Privacy Policy: End-to-end data encryption and strict campus privacy compliance.')}
               className="hover:text-slate-900 transition-colors"
             >
               Privacy
@@ -789,7 +789,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => alert('All CampusIQ telemetry clusters are currently 100% operational.')}
+              onClick={() => alert('All ResolveX telemetry clusters are currently 100% operational.')}
               className="hover:text-slate-900 transition-colors"
             >
               Status
