@@ -1,24 +1,19 @@
 import React, { useState } from 'react';
-import { 
-  Upload, 
-  MapPin, 
-  Sparkles, 
-  Image as ImageIcon, 
-  Check, 
-  Crosshair, 
-  AlertCircle, 
-  FileText, 
+import {
+  Upload,
+  Sparkles,
+  Check,
+  Crosshair,
+  AlertCircle,
   X,
   Search,
-  CheckCircle2,
-  ChevronDown,
-  Camera
 } from 'lucide-react';
 import { CampusIssue, CampusLocation, IssueCategory } from '../../types';
 import { CAMPUS_LOCATIONS } from '../../data/mockData';
 import { CampusMapViewer } from '../common/CampusMapViewer';
 import { AIAnalysisSequenceModal } from './AIAnalysisSequenceModal';
 import { runAIClassificationEngine } from '../../services/aiClassifier';
+import { createIssue } from '../../services/issueApi';
 
 interface ReportIssueViewProps {
   existingIssues: CampusIssue[];
@@ -33,112 +28,190 @@ export const ReportIssueView: React.FC<ReportIssueViewProps> = ({
 }) => {
   const [description, setDescription] = useState('');
   const [specificDetails, setSpecificDetails] = useState('');
-  const [selectedLocation, setSelectedLocation] = useState<CampusLocation>(CAMPUS_LOCATIONS[0]);
+  const [selectedLocation, setSelectedLocation] =
+    useState<CampusLocation>(CAMPUS_LOCATIONS[0]);
   const [searchLocationQuery, setSearchLocationQuery] = useState('');
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [imageVisionTags, setImageVisionTags] = useState<string[]>([]);
-  const [imageVisionConfidence, setImageVisionConfidence] = useState<number>(0);
+  const [imageVisionConfidence, setImageVisionConfidence] = useState(0);
   const [letAIClassify, setLetAIClassify] = useState(true);
-  const [categoryOverride, setCategoryOverride] = useState<IssueCategory | ''>('');
+  const [categoryOverride, setCategoryOverride] =
+    useState<IssueCategory | ''>('');
   const [showOverrideDropdown, setShowOverrideDropdown] = useState(false);
-  
-  // Modal state
   const [showAnalysisModal, setShowAnalysisModal] = useState(false);
   const [currentAnalysis, setCurrentAnalysis] = useState<any>(null);
   const [formError, setFormError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Sample quick-fill templates for instant testing & demonstration
-  const handleQuickFill = (type: 'electrical' | 'water' | 'hvac' | 'wifi') => {
+  // Quick-fill templates for testing and demonstration.
+  const handleQuickFill = (
+    type: 'electrical' | 'water' | 'hvac' | 'wifi'
+  ) => {
     if (type === 'electrical') {
-      setDescription('Water leakage near electrical panel in basement corridor. Water is actively dripping onto conduits with sparking sounds.');
-      setSelectedLocation(CAMPUS_LOCATIONS[0]); // Hostel Block B
-      setSpecificDetails('Basement utility closet B-08, next to laundry area');
-      setImagePreview('https://images.unsplash.com/photo-1581092160607-ee22621dd758?auto=format&fit=crop&q=80&w=800');
-      setImageVisionTags(['Exposed 415V distribution conduit', 'Moisture accumulation on wall']);
+      setDescription(
+        'Water leakage near electrical panel in basement corridor. Water is actively dripping onto conduits with sparking sounds.'
+      );
+      setSelectedLocation(CAMPUS_LOCATIONS[0]);
+      setSpecificDetails(
+        'Basement utility closet B-08, next to laundry area'
+      );
+      setImagePreview(
+        'https://images.unsplash.com/photo-1581092160607-ee22621dd758?auto=format&fit=crop&q=80&w=800'
+      );
+      setImageVisionTags([
+        'Exposed 415V distribution conduit',
+        'Moisture accumulation on wall',
+      ]);
       setImageVisionConfidence(94);
     } else if (type === 'water') {
-      setDescription('Main vertical riser valve ruptured. High volume water leaking across hallway floor.');
+      setDescription(
+        'Main vertical riser valve ruptured. High volume water leaking across hallway floor.'
+      );
       setSelectedLocation(CAMPUS_LOCATIONS[0]);
       setSpecificDetails('2nd floor restroom shaft');
-      setImagePreview('https://images.unsplash.com/photo-1585704032915-c3400ca199e7?auto=format&fit=crop&q=80&w=800');
-      setImageVisionTags(['High pressure water spray', 'Tile floor pooling']);
+      setImagePreview(
+        'https://images.unsplash.com/photo-1585704032915-c3400ca199e7?auto=format&fit=crop&q=80&w=800'
+      );
+      setImageVisionTags([
+        'High pressure water spray',
+        'Tile floor pooling',
+      ]);
       setImageVisionConfidence(91);
     } else if (type === 'hvac') {
-      setDescription('Air handling unit in main auditorium has stopped running. Classroom ambient temperature reached 29°C.');
-      setSelectedLocation(CAMPUS_LOCATIONS[4]); // Central Library
+      setDescription(
+        'Air handling unit in main auditorium has stopped running. Classroom ambient temperature reached 29°C.'
+      );
+      setSelectedLocation(CAMPUS_LOCATIONS[4]);
       setSpecificDetails('Auditorium East Wing');
       setImagePreview(null);
       setImageVisionTags([]);
-    } else if (type === 'wifi') {
-      setDescription('Wireless access point dropped offline. All student laptops unable to resolve DNS or reach class portals.');
+      setImageVisionConfidence(0);
+    } else {
+      setDescription(
+        'Wireless access point dropped offline. All student laptops unable to resolve DNS or reach class portals.'
+      );
       setSelectedLocation(CAMPUS_LOCATIONS[4]);
       setSpecificDetails('2nd Floor Quiet Study Area');
       setImagePreview(null);
       setImageVisionTags([]);
+      setImageVisionConfidence(0);
     }
+
     setFormError('');
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setImagePreview(reader.result as string);
-        // Instant simulated AI image feature tag extraction
-        const descLower = description.toLowerCase();
-        if (descLower.includes('water') || descLower.includes('leak')) {
-          setImageVisionTags(['Water pooling detected', 'Surface moisture gradient']);
-          setImageVisionConfidence(93);
-        } else if (descLower.includes('electric') || descLower.includes('wire')) {
-          setImageVisionTags(['Electrical distribution hazard', 'Exposed conductor point']);
-          setImageVisionConfidence(94);
-        } else {
-          setImageVisionTags(['Physical infrastructure anomaly detected', 'Optical surface texture deviation']);
-          setImageVisionConfidence(89);
-        }
-      };
-      reader.readAsDataURL(file);
+
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      setFormError('Please select a valid image file.');
+      return;
     }
+
+    if (file.size > 10 * 1024 * 1024) {
+      setFormError('The image must be smaller than 10 MB.');
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onloadend = () => {
+      setImagePreview(reader.result as string);
+
+      const descLower = description.toLowerCase();
+
+      if (
+        descLower.includes('water') ||
+        descLower.includes('leak')
+      ) {
+        setImageVisionTags([
+          'Water pooling detected',
+          'Surface moisture gradient',
+        ]);
+        setImageVisionConfidence(93);
+      } else if (
+        descLower.includes('electric') ||
+        descLower.includes('wire')
+      ) {
+        setImageVisionTags([
+          'Electrical distribution hazard',
+          'Exposed conductor point',
+        ]);
+        setImageVisionConfidence(94);
+      } else {
+        setImageVisionTags([
+          'Physical infrastructure anomaly detected',
+          'Optical surface texture deviation',
+        ]);
+        setImageVisionConfidence(89);
+      }
+    };
+
+    reader.onerror = () => {
+      setFormError('Unable to read the selected image.');
+    };
+
+    reader.readAsDataURL(file);
   };
 
   const handleUseCurrentLocation = () => {
     if ('geolocation' in navigator) {
       navigator.geolocation.getCurrentPosition(
         () => {
-          // Snap to Central Library or closest campus building
+          // Preserve the existing campus-location selection behavior.
           setSelectedLocation(CAMPUS_LOCATIONS[4]);
-          setSpecificDetails('GPS auto-pinpoint: Near Central Library quadrangle');
+          setSpecificDetails(
+            'GPS auto-pinpoint: Near Central Library quadrangle'
+          );
         },
         () => {
           setSelectedLocation(CAMPUS_LOCATIONS[4]);
-          setSpecificDetails('Approximate location: Campus Central Hub');
+          setSpecificDetails(
+            'Approximate location: Campus Central Hub'
+          );
         }
       );
     } else {
       setSelectedLocation(CAMPUS_LOCATIONS[4]);
+      setSpecificDetails('Approximate location: Campus Central Hub');
     }
   };
 
-  const filteredLocations = CAMPUS_LOCATIONS.filter(loc => 
-    loc.name.toLowerCase().includes(searchLocationQuery.toLowerCase()) ||
-    loc.code.toLowerCase().includes(searchLocationQuery.toLowerCase()) ||
-    loc.zone.toLowerCase().includes(searchLocationQuery.toLowerCase())
+  const filteredLocations = CAMPUS_LOCATIONS.filter(
+    (loc) =>
+      loc.name
+        .toLowerCase()
+        .includes(searchLocationQuery.toLowerCase()) ||
+      loc.code
+        .toLowerCase()
+        .includes(searchLocationQuery.toLowerCase()) ||
+      loc.zone
+        .toLowerCase()
+        .includes(searchLocationQuery.toLowerCase())
   );
 
   const handleStartAnalysis = () => {
     if (!description.trim() || description.trim().length < 8) {
-      setFormError('Please enter a descriptive summary of the problem (at least 8 characters).');
+      setFormError(
+        'Please enter a descriptive summary of the problem (at least 8 characters).'
+      );
       return;
     }
+
     setFormError('');
 
-    // Run AI classification engine
     const analysis = runAIClassificationEngine({
       description,
       location: selectedLocation,
       specificDetails,
-      categoryOverride: (!letAIClassify && categoryOverride) ? (categoryOverride as IssueCategory) : null,
+      categoryOverride:
+        !letAIClassify && categoryOverride
+          ? categoryOverride
+          : null,
       hasImage: !!imagePreview,
       existingIssues,
     });
@@ -147,27 +220,50 @@ export const ReportIssueView: React.FC<ReportIssueViewProps> = ({
     setShowAnalysisModal(true);
   };
 
-  const handleFinalSubmit = () => {
-    if (!currentAnalysis) return;
+  // Submit to FastAPI and save the report in PostgreSQL.
+const handleFinalSubmit = async () => {
+  if (!currentAnalysis) return;
 
-    const titleWords = description.split(' ').slice(0, 7).join(' ');
-    const formattedTitle = titleWords.length < description.length ? `${titleWords}...` : titleWords;
+  setFormError('');
+
+  const titleWords = description.trim().split(/\s+/).slice(0, 7).join(' ');
+  const formattedTitle =
+    titleWords.length < description.trim().length
+      ? `${titleWords}...`
+      : titleWords;
+
+  try {
+    const apiIssue = await createIssue({
+      title:
+        formattedTitle.charAt(0).toUpperCase() +
+        formattedTitle.slice(1),
+      description: description.trim(),
+      category: currentAnalysis.category || 'Other',
+      location: `${selectedLocation.name}${
+        specificDetails.trim()
+          ? ` - ${specificDetails.trim()}`
+          : ''
+      }`,
+    });
+
+    const now = new Date().toISOString();
 
     const newIssue: CampusIssue = {
-      id: `iss-${Date.now()}`,
-      trackingNumber: `CI-2026-${Math.floor(1000 + Math.random() * 9000)}`,
-      title: formattedTitle.charAt(0).toUpperCase() + formattedTitle.slice(1),
-      description,
+      id: String(apiIssue.id),
+      trackingNumber: `RX-${apiIssue.id}`,
+      title: apiIssue.title,
+      description: apiIssue.description,
       category: currentAnalysis.category,
       location: selectedLocation,
-      specificLocationDetails: specificDetails || `${selectedLocation.name} grounds`,
+      specificLocationDetails:
+        specificDetails || `${selectedLocation.name} grounds`,
       reportedBy: {
         name: 'Alex Rivera',
         role: 'Student',
         email: 'alex.rivera@university.edu',
       },
-      reportedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      reportedAt: apiIssue.created_at || now,
+      updatedAt: apiIssue.created_at || now,
       priority: currentAnalysis.severity,
       priorityScore: currentAnalysis.priorityScore,
       status: 'ai_analyzed',
@@ -176,28 +272,40 @@ export const ReportIssueView: React.FC<ReportIssueViewProps> = ({
       images: imagePreview ? [imagePreview] : [],
       timeline: [
         {
-          id: `t-${Date.now()}-1`,
+          id: `t-${apiIssue.id}-1`,
           status: 'reported',
           label: 'Report Submitted',
-          timestamp: new Date().toLocaleString([], { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' }),
+          timestamp: new Date(
+            apiIssue.created_at || now
+          ).toLocaleString(),
           actor: 'Alex Rivera (Mobile)',
         },
         {
-          id: `t-${Date.now()}-2`,
+          id: `t-${apiIssue.id}-2`,
           status: 'ai_analyzed',
           label: 'AI Classified & Prioritized',
-          timestamp: new Date().toLocaleString([], { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' }),
-          actor: 'CampusPulse AI Engine',
+          timestamp: new Date(
+            apiIssue.created_at || now
+          ).toLocaleString(),
+          actor: 'ResolveX AI Engine',
           notes: `Assigned Priority ${currentAnalysis.priorityScore}/100. Routed to ${currentAnalysis.assignedDepartment}.`,
-        }
+        },
       ],
       upvotes: 1,
     };
 
     setShowAnalysisModal(false);
     onSubmitNewIssue(newIssue);
-  };
+  } catch (error) {
+    console.error('Failed to submit issue:', error);
 
+    setFormError(
+      error instanceof Error
+        ? error.message
+        : 'Failed to submit the issue. Please try again.'
+    );
+  }
+};
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       {/* Header */}
@@ -208,19 +316,24 @@ export const ReportIssueView: React.FC<ReportIssueViewProps> = ({
               <Sparkles className="w-3.5 h-3.5" />
               <span>Intelligent Ingestion</span>
             </div>
+
             <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
               Report a Campus Issue
             </h1>
+
             <p className="text-sm text-slate-500 mt-1">
-              Tell us what's wrong. Our AI will handle the classification, severity estimation, and department routing.
+              Tell us what's wrong. Our AI will handle the
+              classification, severity estimation, and department
+              routing.
             </p>
           </div>
 
-          {/* Quick Demo Pre-sets */}
+          {/* Quick Demo Presets */}
           <div className="bg-slate-50 border border-slate-200 rounded-lg p-2 flex flex-col gap-1 text-xs">
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-1">
               Quick Test Templates:
             </span>
+
             <div className="flex flex-wrap gap-1">
               <button
                 type="button"
@@ -229,6 +342,7 @@ export const ReportIssueView: React.FC<ReportIssueViewProps> = ({
               >
                 🔴 Leak near panel
               </button>
+
               <button
                 type="button"
                 onClick={() => handleQuickFill('water')}
@@ -236,6 +350,7 @@ export const ReportIssueView: React.FC<ReportIssueViewProps> = ({
               >
                 🟠 Riser leak
               </button>
+
               <button
                 type="button"
                 onClick={() => handleQuickFill('wifi')}
@@ -249,7 +364,7 @@ export const ReportIssueView: React.FC<ReportIssueViewProps> = ({
       </div>
 
       {formError && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm flex items-center gap-2 animate-shake">
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm flex items-center gap-2">
           <AlertCircle className="w-4 h-4 shrink-0" />
           <span>{formError}</span>
         </div>
@@ -262,6 +377,7 @@ export const ReportIssueView: React.FC<ReportIssueViewProps> = ({
           <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
             Issue Description <span className="text-red-500">*</span>
           </label>
+
           <textarea
             rows={4}
             value={description}
@@ -269,16 +385,20 @@ export const ReportIssueView: React.FC<ReportIssueViewProps> = ({
               setDescription(e.target.value);
               if (formError) setFormError('');
             }}
-            placeholder="Describe the problem in plain language... (e.g., Water leakage near electrical panel on ground floor, flickering lights in stairwell, broken access card reader)"
+            placeholder="Describe the problem in plain language..."
             className="w-full rounded-lg border border-slate-300 p-3.5 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-transparent transition-all"
           />
+
           <p className="text-xs text-slate-400 mt-1.5 flex items-center gap-1">
             <Sparkles className="w-3 h-3 text-blue-500" />
-            <span>The AI parses safety keywords, compound hazards, and urgency modifiers automatically.</span>
+            <span>
+              The AI parses safety keywords, compound hazards, and
+              urgency modifiers automatically.
+            </span>
           </p>
         </div>
 
-        {/* 2. Upload Image with AI Image Analysis preview */}
+        {/* 2. Upload Evidence */}
         <div>
           <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
             Upload Evidence / Image (Optional)
@@ -292,12 +412,15 @@ export const ReportIssueView: React.FC<ReportIssueViewProps> = ({
                 onChange={handleImageUpload}
                 className="hidden"
               />
+
               <div className="p-3 bg-white rounded-full border border-slate-200 text-slate-600 group-hover:text-blue-600 group-hover:scale-110 transition-transform shadow-xs">
                 <Upload className="w-5 h-5" />
               </div>
+
               <span className="text-sm font-semibold text-slate-700 mt-2">
                 Click to upload or drag and drop photo
               </span>
+
               <span className="text-xs text-slate-400 mt-0.5">
                 PNG, JPG, HEIC up to 10MB
               </span>
@@ -310,11 +433,13 @@ export const ReportIssueView: React.FC<ReportIssueViewProps> = ({
                   alt="Evidence Preview"
                   className="w-full h-full object-cover"
                 />
+
                 <button
                   type="button"
                   onClick={() => {
                     setImagePreview(null);
                     setImageVisionTags([]);
+                    setImageVisionConfidence(0);
                   }}
                   className="absolute top-1 right-1 bg-slate-900/80 text-white p-1 rounded-full hover:bg-red-600 transition-colors"
                   title="Remove image"
@@ -323,12 +448,12 @@ export const ReportIssueView: React.FC<ReportIssueViewProps> = ({
                 </button>
               </div>
 
-              {/* AI Image Analysis Badge */}
               <div className="flex-1">
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-bold uppercase tracking-wider text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded">
                     AI Image Analysis
                   </span>
+
                   {imageVisionConfidence > 0 && (
                     <span className="text-xs font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
                       Confidence: {imageVisionConfidence}%
@@ -339,14 +464,18 @@ export const ReportIssueView: React.FC<ReportIssueViewProps> = ({
                 <div className="mt-2 space-y-1">
                   {imageVisionTags.length > 0 ? (
                     imageVisionTags.map((tag, i) => (
-                      <div key={i} className="text-xs font-medium text-slate-700 flex items-center gap-1.5">
+                      <div
+                        key={i}
+                        className="text-xs font-medium text-slate-700 flex items-center gap-1.5"
+                      >
                         <Check className="w-3.5 h-3.5 text-emerald-600" />
                         <span>{tag}</span>
                       </div>
                     ))
                   ) : (
                     <p className="text-xs text-slate-500">
-                      Visual inspection confirmed. Ready for neural risk scoring.
+                      Visual inspection confirmed. Ready for neural risk
+                      scoring.
                     </p>
                   )}
                 </div>
@@ -362,8 +491,10 @@ export const ReportIssueView: React.FC<ReportIssueViewProps> = ({
               <label className="text-xs font-bold uppercase tracking-wider text-slate-700">
                 Campus Location <span className="text-red-500">*</span>
               </label>
+
               <p className="text-xs text-slate-500">
-                Select location on map, search building, or use current location
+                Select location on map, search building, or use current
+                location
               </p>
             </div>
 
@@ -377,10 +508,10 @@ export const ReportIssueView: React.FC<ReportIssueViewProps> = ({
             </button>
           </div>
 
-          {/* Location Search Bar & Selector */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="relative">
               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+
               <input
                 type="text"
                 value={searchLocationQuery}
@@ -393,12 +524,15 @@ export const ReportIssueView: React.FC<ReportIssueViewProps> = ({
             <select
               value={selectedLocation.id}
               onChange={(e) => {
-                const found = CAMPUS_LOCATIONS.find(l => l.id === e.target.value);
+                const found = CAMPUS_LOCATIONS.find(
+                  (loc) => loc.id === e.target.value
+                );
+
                 if (found) setSelectedLocation(found);
               }}
               className="w-full py-2 px-3 text-xs rounded-lg border border-slate-300 bg-white font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-600"
             >
-              {filteredLocations.map(loc => (
+              {filteredLocations.map((loc) => (
                 <option key={loc.id} value={loc.id}>
                   [{loc.code}] {loc.name} - {loc.zone}
                 </option>
@@ -406,7 +540,7 @@ export const ReportIssueView: React.FC<ReportIssueViewProps> = ({
             </select>
           </div>
 
-          {/* Interactive Campus Map Stage */}
+          {/* Existing interactive map retained */}
           <div className="pt-1">
             <CampusMapViewer
               issues={existingIssues}
@@ -416,11 +550,11 @@ export const ReportIssueView: React.FC<ReportIssueViewProps> = ({
             />
           </div>
 
-          {/* Room / Specific Details input */}
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">
               Specific Room, Corridor, or Landmark Details (Optional)
             </label>
+
             <input
               type="text"
               value={specificDetails}
@@ -431,7 +565,7 @@ export const ReportIssueView: React.FC<ReportIssueViewProps> = ({
           </div>
         </div>
 
-        {/* 4. Category selection (Let AI classify default vs manual override) */}
+        {/* 4. Category Selection */}
         <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -441,11 +575,19 @@ export const ReportIssueView: React.FC<ReportIssueViewProps> = ({
                 checked={letAIClassify}
                 onChange={(e) => {
                   setLetAIClassify(e.target.checked);
-                  if (e.target.checked) setCategoryOverride('');
+
+                  if (e.target.checked) {
+                    setCategoryOverride('');
+                    setShowOverrideDropdown(false);
+                  }
                 }}
                 className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500"
               />
-              <label htmlFor="letAIClassify" className="text-xs font-bold text-slate-800 flex items-center gap-1.5 cursor-pointer">
+
+              <label
+                htmlFor="letAIClassify"
+                className="text-xs font-bold text-slate-800 flex items-center gap-1.5 cursor-pointer"
+              >
                 <Sparkles className="w-3.5 h-3.5 text-blue-600" />
                 <span>Let AI automatically classify this issue</span>
               </label>
@@ -468,33 +610,37 @@ export const ReportIssueView: React.FC<ReportIssueViewProps> = ({
               <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                 Manual Category Override:
               </label>
+
               <select
                 value={categoryOverride}
-                onChange={(e) => setCategoryOverride(e.target.value as IssueCategory)}
+                onChange={(e) =>
+                  setCategoryOverride(e.target.value as IssueCategory)
+                }
                 className="w-full text-xs p-2.5 rounded-lg border border-slate-300 bg-white"
               >
                 <option value="">Select Category...</option>
                 <option value="Electrical">Electrical</option>
-                <option value="Plumbing & Water">Plumbing &amp; Water</option>
-                <option value="HVAC & Climate">HVAC &amp; Climate</option>
-                <option value="Civil & Structural">Civil &amp; Structural</option>
-                <option value="Internet & Network">Internet &amp; Network</option>
-                <option value="Sanitation & Waste">Sanitation &amp; Waste</option>
-                <option value="Security & Safety">Security &amp; Safety</option>
-                <option value="Furniture & Fixtures">Furniture &amp; Fixtures</option>
-                <option value="Roads & Pathways">Roads &amp; Pathways</option>
+                <option value="Plumbing & Water">Plumbing & Water</option>
+                <option value="HVAC & Climate">HVAC & Climate</option>
+                <option value="Civil & Structural">Civil & Structural</option>
+                <option value="Internet & Network">Internet & Network</option>
+                <option value="Sanitation & Waste">Sanitation & Waste</option>
+                <option value="Security & Safety">Security & Safety</option>
+                <option value="Furniture & Fixtures">Furniture & Fixtures</option>
+                <option value="Roads & Pathways">Roads & Pathways</option>
                 <option value="Other Infrastructure">Other Infrastructure</option>
               </select>
             </div>
           )}
         </div>
 
-        {/* 5. Submit CTA */}
+        {/* 5. Submit */}
         <div className="pt-2 flex items-center justify-between">
           <button
             type="button"
             onClick={onCancel}
-            className="px-5 py-2.5 text-xs font-semibold text-slate-600 hover:text-slate-800 transition-colors"
+            disabled={isSubmitting}
+            className="px-5 py-2.5 text-xs font-semibold text-slate-600 hover:text-slate-800 transition-colors disabled:opacity-50"
           >
             Cancel
           </button>
@@ -502,10 +648,11 @@ export const ReportIssueView: React.FC<ReportIssueViewProps> = ({
           <button
             type="button"
             onClick={handleStartAnalysis}
-            className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold px-7 py-3 rounded-xl shadow-md hover:shadow-lg transition-all"
+            disabled={isSubmitting}
+            className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold px-7 py-3 rounded-xl shadow-md hover:shadow-lg transition-all disabled:opacity-50"
           >
             <Sparkles className="w-4 h-4" />
-            <span>Analyze &amp; Submit Issue</span>
+            <span>Analyze & Submit Issue</span>
           </button>
         </div>
       </div>
@@ -514,7 +661,9 @@ export const ReportIssueView: React.FC<ReportIssueViewProps> = ({
       {currentAnalysis && (
         <AIAnalysisSequenceModal
           isOpen={showAnalysisModal}
-          onClose={() => setShowAnalysisModal(false)}
+          onClose={() => {
+            if (!isSubmitting) setShowAnalysisModal(false);
+          }}
           analysisResult={currentAnalysis}
           issueTitle={description}
           location={selectedLocation}

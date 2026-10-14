@@ -201,26 +201,33 @@ export default function App() {
               />
             )}
 
-            {currentView === 'report-issue' && (
-              <ReportIssueView
-                locations={CAMPUS_LOCATIONS}
-                currentUser={currentUser || CURRENT_USER}
-                onIssueCreated={handleIssueCreated}
-                onCancel={() => {
-                  setCurrentView(currentUser?.role === 'admin' ? 'admin-dashboard' : 'student-dashboard');
-                }}
-              />
-            )}
-
-            {currentView === 'my-issues' && (
-              <MyIssuesView
-                issues={issues}
-                onSelectIssue={(issue) => setSelectedIssue(issue)}
-                onNavigateToReport={() => setCurrentView('report-issue')}
-                userEmail={currentUser?.email || CURRENT_USER.email}
-              />
-            )}
-
+{currentView === 'report-issue' && (
+  <ReportIssueView
+    existingIssues={issues}
+    onSubmitNewIssue={handleIssueCreated}
+    onCancel={() => {
+      setCurrentView(
+        currentUser?.role === 'admin'
+          ? 'admin-dashboard'
+          : 'student-dashboard'
+      );
+    }}
+  />
+)}
+{currentView === 'report-issue' && (
+  <ReportIssueView
+    existingIssues={issues}
+    onSubmitNewIssue={handleIssueCreated}
+    onCancel={() => {
+      setCurrentView(
+        currentUser?.role === 'admin'
+          ? 'admin-dashboard'
+          : 'student-dashboard'
+      );
+    }}
+  />
+)}
+```
             {currentView === 'admin-dashboard' && (
               <AdminDashboard
                 issues={issues}
