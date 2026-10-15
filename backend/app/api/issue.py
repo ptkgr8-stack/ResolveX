@@ -1,9 +1,11 @@
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from app.api.auth import _get_current_user
 from app.core.database import get_db
 from app.models.issue import Issue
+from app.models.user import User
 from app.schemas.issue import IssueCreate, IssueResponse, IssueStatusUpdate
 
 router = APIRouter(prefix="/api/issues", tags=["Issues"])
@@ -43,7 +45,11 @@ def estimate_priority(category: str, description: str) -> str:
 
 
 @router.post("", response_model=IssueResponse, status_code=201)
-def create_issue(payload: IssueCreate, db: Session = Depends(get_db)):
+def create_issue(
+    payload: IssueCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_get_current_user),
+):
     priority = estimate_priority(payload.category, payload.description)
 
     issue = Issue(
@@ -63,15 +69,16 @@ def create_issue(payload: IssueCreate, db: Session = Depends(get_db)):
 
 @router.get("", response_model=list[IssueResponse])
 def list_issues(
-    status: str | None = None,
+    status_filter: str | None = Query(default=None, alias="status"),
     category: str | None = None,
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
+    current_user: User = Depends(_get_current_user),
 ):
     query = db.query(Issue)
 
-    if status:
-        query = query.filter(Issue.status == status)
+    if status_filter:
+        query = query.filter(Issue.status == status_filter)
 
     if category:
         query = query.filter(Issue.category.ilike(category))
@@ -80,7 +87,11 @@ def list_issues(
 
 
 @router.get("/{issue_id}", response_model=IssueResponse)
-def get_issue(issue_id: int, db: Session = Depends(get_db)):
+def get_issue(
+    issue_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_get_current_user),
+):
     issue = db.query(Issue).filter(Issue.id == issue_id).first()
 
     if issue is None:
@@ -94,7 +105,14 @@ def update_issue_status(
     issue_id: int,
     payload: IssueStatusUpdate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(_get_current_user),
 ):
+    if current_user.role not in {"admin", "faculty"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only authorized staff can update issue statuses",
+        )
+
     if payload.status not in ALLOWED_STATUSES:
         raise HTTPException(
             status_code=400,

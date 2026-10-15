@@ -22,7 +22,10 @@ import {
   CURRENT_USER,
 } from './data/mockData';
 
-import { getIssues } from './services/issueApi';
+import {
+  getIssues,
+  updateIssueStatus,
+} from './services/issueApi';
 
 import { Navbar } from './components/layout/Navbar';
 import { LandingPage } from './components/landing/LandingPage';
@@ -40,7 +43,6 @@ import { AuthModal } from './components/auth/AuthModal';
 import { CampusAuthView } from './components/auth/CampusAuthView';
 
 export default function App() {
-  // Start with an empty list; load real issues from FastAPI.
   const [issues, setIssues] = useState<CampusIssue[]>([]);
   const [kpis, setKpis] = useState<CampusKPIs>(INITIAL_KPIS);
 
@@ -49,27 +51,33 @@ export default function App() {
   const [selectedIssue, setSelectedIssue] = useState<CampusIssue | null>(null);
 
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [authModalRole, setAuthModalRole] = useState<'student' | 'admin'>('student');
-  const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
+  const [authModalRole, setAuthModalRole] =
+    useState<'student' | 'admin'>('student');
+  const [authModalMode, setAuthModalMode] =
+    useState<'login' | 'register'>('login');
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [issuesLoading, setIssuesLoading] = useState(true);
 
   const showToast = (message: string) => {
     setToastMessage(message);
+
     window.setTimeout(() => {
       setToastMessage(null);
     }, 4500);
   };
 
-  // Fetch the latest issue records from PostgreSQL through FastAPI.
+  // Fetch the latest issue records from FastAPI/PostgreSQL.
   const refreshIssues = useCallback(async () => {
     try {
       const data = await getIssues();
       setIssues(data as unknown as CampusIssue[]);
     } catch (error) {
       console.error('Failed to load campus issues:', error);
-      showToast('Could not load issues from the server. Check that the backend is running.');
+
+      showToast(
+        'Could not load issues from the server. Check your login and backend.'
+      );
     } finally {
       setIssuesLoading(false);
     }
@@ -81,7 +89,6 @@ export default function App() {
 
   // Called after ReportIssueView successfully creates an issue.
   const handleIssueCreated = (newIssue: CampusIssue) => {
-    // Show the new issue immediately while refreshing the database list.
     setIssues((previous) => [
       newIssue,
       ...previous.filter((issue) => issue.id !== newIssue.id),
@@ -97,30 +104,40 @@ export default function App() {
     void refreshIssues();
   };
 
-  // Update the local display when an issue status changes.
-  const handleUpdateIssueStatus = (
+  // Save the status through the API before updating the selected issue.
+  const handleUpdateIssueStatus = async (
     issueId: string,
     status: IssueStatus
   ) => {
-    const updatedAt = new Date().toISOString();
+    try {
+      const savedIssue = await updateIssueStatus(
+        Number(issueId),
+        String(status)
+      );
 
-    setIssues((previous) =>
-      previous.map((issue) =>
-        String(issue.id) === String(issueId)
-          ? { ...issue, status, updatedAt }
-          : issue
-      )
-    );
+      // Refresh the issue list from the server after a successful save.
+      await refreshIssues();
 
-    setSelectedIssue((previous) =>
-      previous && String(previous.id) === String(issueId)
-        ? { ...previous, status, updatedAt }
-        : previous
-    );
+      // Keep the currently selected issue in sync with the saved status.
+      setSelectedIssue((previous) =>
+        previous && String(previous.id) === String(savedIssue.id)
+          ? {
+              ...previous,
+              status: savedIssue.status as IssueStatus,
+            }
+          : previous
+      );
 
-    showToast(
-      `Ticket status changed to: ${String(status).replace(/_/g, ' ').toUpperCase()}`
-    );
+      showToast(`Ticket status saved: ${savedIssue.status}`);
+    } catch (error) {
+      console.error('Failed to update issue status:', error);
+
+      showToast(
+        error instanceof Error
+          ? error.message
+          : 'Could not update the issue status.'
+      );
+    }
   };
 
   const handleScheduleInspection = (alert: PredictiveAlert) => {
@@ -137,14 +154,17 @@ export default function App() {
   };
 
   const isLandingView = currentView === 'landing';
-  const isAuthView = currentView === 'login' || currentView === 'register';
+  const isAuthView =
+    currentView === 'login' || currentView === 'register';
 
   const handleLoginSuccess = (user: UserProfile) => {
     setCurrentUser(user);
     setIsAuthModalOpen(false);
+
     setCurrentView(
       user.role === 'admin' ? 'admin-dashboard' : 'student-dashboard'
     );
+
     showToast(`Welcome to ResolveX, ${user.name}!`);
     void refreshIssues();
   };
@@ -167,8 +187,8 @@ export default function App() {
         onLogout={() => {
           setCurrentUser(null);
           setCurrentView('landing');
+          setSelectedIssue(null);
 
-          // Clear saved login tokens.
           localStorage.removeItem('resolvex_access_token');
           sessionStorage.removeItem('resolvex_access_token');
 

@@ -1,3 +1,4 @@
+
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 
@@ -20,6 +21,16 @@ export interface ApiIssue {
   created_at: string;
 }
 
+function getAuthHeaders(): Record<string, string> {
+  const token =
+    localStorage.getItem("resolvex_access_token") ||
+    sessionStorage.getItem("resolvex_access_token");
+
+  return token
+    ? { Authorization: `Bearer ${token}` }
+    : {};
+}
+
 async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const message = await response.text();
@@ -39,6 +50,7 @@ export async function createIssue(
     headers: {
       "Content-Type": "application/json",
       Accept: "application/json",
+      ...getAuthHeaders(),
     },
     body: JSON.stringify(payload),
   });
@@ -50,6 +62,7 @@ export async function getIssues(): Promise<ApiIssue[]> {
   const response = await fetch(`${API_BASE_URL}/api/issues`, {
     headers: {
       Accept: "application/json",
+      ...getAuthHeaders(),
     },
   });
 
@@ -67,6 +80,7 @@ export async function updateIssueStatus(
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
+        ...getAuthHeaders(),
       },
       body: JSON.stringify({ status }),
     }
