@@ -24,12 +24,19 @@ def estimate_priority(category: str, description: str) -> str:
     text = f"{category} {description}".lower()
 
     critical_terms = [
-        "fire", "electrocution", "electric shock",
-        "gas leak", "structural collapse",
+        "fire",
+        "electrocution",
+        "electric shock",
+        "gas leak",
+        "structural collapse",
     ]
     high_terms = [
-        "exposed wire", "short circuit", "flooding",
-        "severe leak", "broken glass", "unsafe",
+        "exposed wire",
+        "short circuit",
+        "flooding",
+        "severe leak",
+        "broken glass",
+        "unsafe",
     ]
 
     if any(term in text for term in critical_terms):
@@ -42,6 +49,10 @@ def estimate_priority(category: str, description: str) -> str:
         return "High"
 
     return "Medium"
+
+
+def is_staff(user: User) -> bool:
+    return user.role in {"admin", "faculty"}
 
 
 @router.post("", response_model=IssueResponse, status_code=201)
@@ -59,6 +70,7 @@ def create_issue(
         location=payload.location,
         priority=priority,
         status="Reported",
+        reporter_id=current_user.id,
     )
 
     db.add(issue)
@@ -77,6 +89,10 @@ def list_issues(
 ):
     query = db.query(Issue)
 
+    # Staff can view campus-wide reports. Students see only their own.
+    if not is_staff(current_user):
+        query = query.filter(Issue.reporter_id == current_user.id)
+
     if status_filter:
         query = query.filter(Issue.status == status_filter)
 
@@ -92,9 +108,16 @@ def get_issue(
     db: Session = Depends(get_db),
     current_user: User = Depends(_get_current_user),
 ):
-    issue = db.query(Issue).filter(Issue.id == issue_id).first()
+    query = db.query(Issue).filter(Issue.id == issue_id)
+
+    # Prevent students from accessing another user's issue by ID.
+    if not is_staff(current_user):
+        query = query.filter(Issue.reporter_id == current_user.id)
+
+    issue = query.first()
 
     if issue is None:
+        # Do not reveal whether another user's issue exists.
         raise HTTPException(status_code=404, detail="Issue not found")
 
     return issue
@@ -107,7 +130,7 @@ def update_issue_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(_get_current_user),
 ):
-    if current_user.role not in {"admin", "faculty"}:
+    if not is_staff(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only authorized staff can update issue statuses",

@@ -28,7 +28,9 @@ interface StudentDashboardProps {
   onSelectIssue: (issue: CampusIssue) => void;
 }
 
-// Supports both the existing frontend format and the backend API format.
+/**
+ * Supports the existing frontend format and backend API format.
+ */
 type IssueRecord = CampusIssue & {
   id: string | number;
   title: string;
@@ -89,40 +91,43 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   onNavigateToMyIssues,
   onSelectIssue,
 }) => {
-  // Adapt API records to the fields used by the existing UI.
+  // The backend filters student reports using the authenticated user's ID.
   const records = issues as IssueRecord[];
-
-  // The API currently provides campus-wide issues, not reporter identity.
-  // Therefore these counters represent campus-wide totals for now.
   const userIssues = records;
 
-  const reportedCount = records.length;
+  const reportedCount = userIssues.length;
 
-  const inProgressCount = records.filter((issue) => {
+  const inProgressCount = userIssues.filter((issue) => {
     const status = normaliseStatus(issue.status);
-    return status === 'in progress' || status === 'assigned';
+    return (
+      status === 'in progress' ||
+      status === 'assigned' ||
+      status === 'under review'
+    );
   }).length;
 
-  const resolvedCount = records.filter((issue) => {
+  const resolvedCount = userIssues.filter((issue) => {
     const status = normaliseStatus(issue.status);
     return status === 'resolved' || status === 'closed';
   }).length;
 
-  const criticalCount = records.filter((issue) => {
+  const criticalCount = userIssues.filter((issue) => {
     const priority = issue.priority.toLowerCase().trim();
-    return priority === 'critical' || priority === 'urgent';
+    return (
+      priority === 'critical' ||
+      priority === 'urgent' ||
+      issue.aiAnalysis?.safetyHazard === true
+    );
   }).length;
 
-  const totalOpenCampus = records.filter((issue) => {
+  const totalOpenIssues = userIssues.filter((issue) => {
     const status = normaliseStatus(issue.status);
-    return status !== 'resolved' && status !== 'closed';
+    return status !== 'resolved' && status !== 'closed' && status !== 'rejected';
   }).length;
-
-  const resolvedTodayCampus = resolvedCount;
 
   return (
     <div className="space-y-6">
-      {/* Welcome & Operations Overview Bar */}
+      {/* Welcome & Overview Bar */}
       <div className="bg-white rounded-xl border border-slate-200/90 p-5 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 mb-1">
@@ -140,7 +145,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           </h1>
 
           <p className="text-xs text-slate-500 mt-0.5">
-            Track the status of your reported campus maintenance issues and view building announcements.
+            Track the status of your reported campus maintenance issues.
           </p>
         </div>
 
@@ -157,38 +162,38 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       {/* Campus Advisory Feed */}
       <AIInsightsBanner />
 
-      {/* Statistics Cards */}
+      {/* Personal Statistics Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
         <KPICard
           title="Issues Reported"
           value={reportedCount}
-          subtitle="Total campus submissions"
+          subtitle="Your submitted reports"
           icon={FileText}
         />
 
         <KPICard
           title="In Progress"
           value={inProgressCount}
-          subtitle="Assigned to maintenance crews"
+          subtitle="Your active reports"
           icon={Clock}
         />
 
         <KPICard
           title="Resolved"
           value={resolvedCount}
-          subtitle="Verified technician fixes"
+          subtitle="Your resolved reports"
           icon={CheckCircle2}
         />
 
         <KPICard
           title="Urgent Safety Issues"
           value={criticalCount}
-          subtitle="Immediate dispatch category"
+          subtitle="Your urgent safety reports"
           icon={AlertTriangle}
         />
       </div>
 
-      {/* Recent Reports and Campus Infrastructure Status */}
+      {/* Recent Reports and Personal Issue Overview */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Recent Reports */}
         <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200/90 p-5 shadow-2xs flex flex-col justify-between">
@@ -196,10 +201,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h3 className="text-base font-bold text-slate-900">
-                  Recent Campus Reports
+                  My Recent Reports
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Real-time status, department routing, and technician assignment
+                  Status updates for the issues you have reported
                 </p>
               </div>
 
@@ -221,7 +226,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 </p>
                 <p className="text-xs text-slate-500 mt-1 max-w-xs mx-auto">
                   Notice a defect, plumbing leak, broken light, or hazard? Tap
-                  "Report New Maintenance Issue" to notify campus facilities.
+                  "Report New Maintenance Issue" to submit your first report.
                 </p>
               </div>
             ) : (
@@ -230,6 +235,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   const locationName = getLocationName(issue.location);
                   const department = getDepartment(issue);
                   const trackingNumber = getTrackingNumber(issue);
+
                   const isSafetyHazard =
                     issue.aiAnalysis?.safetyHazard === true ||
                     issue.priority.toLowerCase() === 'critical' ||
@@ -238,7 +244,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   return (
                     <div
                       key={issue.id}
+                      role="button"
+                      tabIndex={0}
                       onClick={() => onSelectIssue(issue)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          onSelectIssue(issue);
+                        }
+                      }}
                       className="p-3.5 rounded-xl border border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50/60 transition-colors cursor-pointer shadow-2xs group"
                     >
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 mb-1.5">
@@ -292,7 +306,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           </div>
 
           <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-            <span>Tracking active maintenance updates</span>
+            <span>Tracking updates for your reports</span>
 
             <button
               type="button"
@@ -304,18 +318,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           </div>
         </div>
 
-        {/* Campus Facilities Overview */}
+        {/* Personal Issue Overview */}
         <div className="bg-white rounded-xl border border-slate-200/90 p-5 shadow-2xs space-y-4">
           <div>
             <div className="flex items-center gap-2 mb-1">
               <Activity className="w-4 h-4 text-slate-600" />
               <h3 className="text-base font-bold text-slate-900">
-                Campus Facilities Overview
+                My Issue Overview
               </h3>
             </div>
 
             <p className="text-xs text-slate-500">
-              Campus-wide maintenance resolution status
+              Status of your reported issues
             </p>
           </div>
 
@@ -323,30 +337,30 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <div className="bg-slate-50 border border-slate-200/80 rounded-lg p-3 flex items-center justify-between">
               <div>
                 <span className="text-slate-500 block text-[11px]">
-                  Total Active Work Orders
+                  Your Open Issues
                 </span>
                 <span className="text-xl font-bold font-mono text-slate-900">
-                  {totalOpenCampus}
+                  {totalOpenIssues}
                 </span>
               </div>
 
               <span className="text-[11px] font-medium text-slate-700 bg-white px-2 py-0.5 rounded border border-slate-200">
-                10 Campus Zones
+                Personal Summary
               </span>
             </div>
 
             <div className="bg-slate-50 border border-slate-200/80 rounded-lg p-3 flex items-center justify-between">
               <div>
                 <span className="text-slate-500 block text-[11px]">
-                  Work Orders Resolved
+                  Your Resolved Issues
                 </span>
                 <span className="text-xl font-bold font-mono text-emerald-700">
-                  {resolvedTodayCampus}
+                  {resolvedCount}
                 </span>
               </div>
 
               <span className="text-[11px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200/60">
-                Live count
+                Based on your reports
               </span>
             </div>
 
@@ -368,20 +382,21 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <div className="bg-amber-50/80 border border-amber-200/90 rounded-lg p-3">
               <div className="flex items-center justify-between mb-1">
                 <span className="font-bold text-amber-900 text-xs">
-                  Active Facility Notice
+                  Issue Reminder
                 </span>
 
                 <span className="text-[10px] font-mono font-semibold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded">
-                  CAMPUS NOTICE
+                  REMINDER
                 </span>
               </div>
 
               <p className="text-xs font-semibold text-amber-900">
-                Check reported issues for current facility concerns
+                Keep track of your submitted reports
               </p>
 
               <p className="text-[11px] text-amber-800 mt-0.5">
-                Review the latest reports and coordinate with the relevant maintenance team.
+                Check the status of your issues and contact the relevant campus
+                team if further assistance is needed.
               </p>
             </div>
           </div>

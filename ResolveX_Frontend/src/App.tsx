@@ -293,15 +293,15 @@ export default function App() {
                   )
                 }
               />
-            )}
-
-            {currentView === 'my-issues' && (
-              <MyIssuesView
-                issues={issues}
-                onSelectIssue={(issue) => setSelectedIssue(issue)}
-              />
-            )}
-
+            )}       
+{currentView === 'my-issues' && (
+  <MyIssuesView
+    issues={issues}
+    onSelectIssue={(issue) => setSelectedIssue(issue)}
+    onNavigateToReport={() => setCurrentView('report-issue')}
+    userEmail={currentUser?.email ?? ''}
+  />
+)}
             {currentView === 'admin-dashboard' && (
               <AdminDashboard
                 issues={issues}
