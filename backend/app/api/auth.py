@@ -3,10 +3,11 @@ import hashlib
 import hmac
 import os
 import secrets
-from dotenv import load_dotenv
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import jwt
+from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pwdlib import PasswordHash
@@ -24,14 +25,14 @@ from app.schemas.auth import (
     VerifyOTP,
 )
 
+# Load backend/.env
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
 password_hash = PasswordHash.recommended()
 bearer_scheme = HTTPBearer(auto_error=False)
 
-from pathlib import Path
-
-load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
 JWT_ALGORITHM = "HS256"
 
@@ -43,7 +44,7 @@ OTP_MAX_ATTEMPTS = 5
 def _secret_key() -> str:
     if not JWT_SECRET_KEY:
         raise HTTPException(
-            status_code=500,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="JWT_SECRET_KEY is missing from backend/.env",
         )
     return JWT_SECRET_KEY
@@ -119,7 +120,6 @@ def _normalise_email(email: str) -> str:
 
 
 def _utc(value: datetime) -> datetime:
-    # PostgreSQL normally returns aware timestamps for TIMESTAMPTZ.
     # Handle naive timestamps defensively.
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
@@ -155,9 +155,15 @@ def _send_new_otp(user: User, db: Session) -> None:
         )
 
 
-@router.post("/register", response_model=UserResponse,
-             status_code=status.HTTP_201_CREATED)
-def register(payload: UserRegister, db: Session = Depends(get_db)):
+@router.post(
+    "/register",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def register(
+    payload: UserRegister,
+    db: Session = Depends(get_db),
+):
     email = _normalise_email(str(payload.email))
 
     existing = db.query(User).filter(User.email == email).first()
@@ -167,8 +173,7 @@ def register(payload: UserRegister, db: Session = Depends(get_db)):
             detail="An account with this email already exists",
         )
 
-    # Only student and faculty roles are accepted by the schema.
-    # Never allow public self-registration as admin or technician.
+    # Public registration is limited to student/faculty by UserRegister.
     role = payload.role
 
     user = User(
@@ -192,19 +197,25 @@ def register(payload: UserRegister, db: Session = Depends(get_db)):
 
 
 @router.post("/verify-otp", response_model=UserResponse)
-def verify_otp(payload: VerifyOTP, db: Session = Depends(get_db)):
+def verify_otp(
+    payload: VerifyOTP,
+    db: Session = Depends(get_db),
+):
     email = _normalise_email(str(payload.email))
     user = db.query(User).filter(User.email == email).first()
 
     if not user:
-        raise HTTPException(status_code=404, detail="Account not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Account not found",
+        )
 
     if user.is_email_verified:
         return user
 
     if not user.otp_hash or not user.otp_expires_at:
         raise HTTPException(
-            status_code=400,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="No active verification code. Request a new code.",
         )
 
@@ -212,8 +223,9 @@ def verify_otp(payload: VerifyOTP, db: Session = Depends(get_db)):
         user.otp_hash = None
         user.otp_expires_at = None
         db.commit()
+
         raise HTTPException(
-            status_code=429,
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many incorrect attempts. Request a new code.",
         )
 
@@ -221,24 +233,33 @@ def verify_otp(payload: VerifyOTP, db: Session = Depends(get_db)):
         user.otp_hash = None
         user.otp_expires_at = None
         db.commit()
+
         raise HTTPException(
-            status_code=400,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="Verification code expired. Request a new code.",
         )
 
-    if not hmac.compare_digest(user.otp_hash, _hash_otp(payload.otp)):
+    if not hmac.compare_digest(
+        user.otp_hash,
+        _hash_otp(payload.otp),
+    ):
         user.otp_attempts += 1
         db.commit()
+
         remaining = max(OTP_MAX_ATTEMPTS - user.otp_attempts, 0)
         raise HTTPException(
-            status_code=400,
-            detail=f"Incorrect verification code. Attempts remaining: {remaining}",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Incorrect verification code. "
+                f"Attempts remaining: {remaining}"
+            ),
         )
 
     user.is_email_verified = True
     user.otp_hash = None
     user.otp_expires_at = None
     user.otp_attempts = 0
+
     db.commit()
     db.refresh(user)
 
@@ -246,16 +267,22 @@ def verify_otp(payload: VerifyOTP, db: Session = Depends(get_db)):
 
 
 @router.post("/resend-otp")
-def resend_otp(payload: ResendOTP, db: Session = Depends(get_db)):
+def resend_otp(
+    payload: ResendOTP,
+    db: Session = Depends(get_db),
+):
     email = _normalise_email(str(payload.email))
     user = db.query(User).filter(User.email == email).first()
 
     if not user:
-        raise HTTPException(status_code=404, detail="Account not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Account not found",
+        )
 
     if user.is_email_verified:
         raise HTTPException(
-            status_code=400,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="This email is already verified. Please log in.",
         )
 
@@ -265,24 +292,36 @@ def resend_otp(payload: ResendOTP, db: Session = Depends(get_db)):
         ).total_seconds()
 
         if elapsed < OTP_RESEND_COOLDOWN_SECONDS:
-            wait = max(1, int(OTP_RESEND_COOLDOWN_SECONDS - elapsed))
+            wait = max(
+                1,
+                int(OTP_RESEND_COOLDOWN_SECONDS - elapsed),
+            )
             raise HTTPException(
-                status_code=429,
-                detail=f"Please wait {wait} seconds before requesting another code.",
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=(
+                    f"Please wait {wait} seconds before "
+                    "requesting another code."
+                ),
             )
 
     _send_new_otp(user, db)
 
-    return {"message": "A new verification code has been sent to your email."}
+    return {
+        "message": "A new verification code has been sent to your email."
+    }
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(payload: UserLogin, db: Session = Depends(get_db)):
+def login(
+    payload: UserLogin,
+    db: Session = Depends(get_db),
+):
     email = _normalise_email(str(payload.email))
     user = db.query(User).filter(User.email == email).first()
 
     if not user or not password_hash.verify(
-        payload.password, user.hashed_password
+        payload.password,
+        user.hashed_password,
     ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -290,17 +329,20 @@ def login(payload: UserLogin, db: Session = Depends(get_db)):
         )
 
     if not user.is_active:
-        raise HTTPException(status_code=403, detail="This account is inactive")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account is inactive",
+        )
 
     if not user.is_email_verified:
         raise HTTPException(
-            status_code=403,
+            status_code=status.HTTP_403_FORBIDDEN,
             detail="Please verify your email before logging in.",
         )
 
     if user.role == "faculty" and not user.is_approved:
         raise HTTPException(
-            status_code=403,
+            status_code=status.HTTP_403_FORBIDDEN,
             detail="Your faculty account is awaiting admin approval.",
         )
 
@@ -312,8 +354,34 @@ def login(payload: UserLogin, db: Session = Depends(get_db)):
 
 
 @router.get("/me", response_model=UserResponse)
-def get_me(current_user: User = Depends(_get_current_user)):
+def get_me(
+    current_user: User = Depends(_get_current_user),
+):
     return current_user
+
+
+@router.get("/pending-faculty", response_model=list[UserResponse])
+def get_pending_faculty(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_get_current_user),
+):
+    # Only an authenticated admin can view pending faculty accounts.
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can view pending faculty accounts.",
+        )
+
+    return (
+        db.query(User)
+        .filter(
+            User.role == "faculty",
+            User.is_email_verified.is_(True),
+            User.is_approved.is_(False),
+        )
+        .order_by(User.created_at.asc())
+        .all()
+    )
 
 
 @router.post("/approve-faculty/{user_id}", response_model=UserResponse)
@@ -322,7 +390,7 @@ def approve_faculty(
     db: Session = Depends(get_db),
     current_user: User = Depends(_get_current_user),
 ):
-    # Approval is available only to an existing, authenticated admin.
+    # Only an authenticated admin can approve faculty accounts.
     if current_user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

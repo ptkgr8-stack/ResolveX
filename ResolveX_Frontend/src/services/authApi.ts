@@ -1,5 +1,7 @@
 
-const API_BASE = 'http://127.0.0.1:8000/api/auth';
+const API_BASE = (
+  import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000/api'
+).replace(/\/$/, '');
 
 export interface AuthUser {
   id: number;
@@ -11,53 +13,157 @@ export interface AuthUser {
   is_approved: boolean;
 }
 
-interface AuthResponse {
+export interface AuthResponse {
   access_token: string;
   token_type: string;
   user: AuthUser;
 }
 
+interface RequestOptions {
+  method?: 'GET' | 'POST';
+  body?: Record<string, unknown>;
+  token?: string;
+}
+
 async function request<T>(
   endpoint: string,
-  body: Record<string, unknown>,
+  options: RequestOptions = {},
 ): Promise<T> {
+  const { method = 'POST', body, token } = options;
+
+  const headers: Record<string, string> = {};
+
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
   const response = await fetch(`${API_BASE}${endpoint}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    method,
+    headers,
+    ...(body !== undefined
+      ? { body: JSON.stringify(body) }
+      : {}),
   });
 
-  const data = await response.json().catch(() => ({}));
+  const data: unknown = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(data.detail || 'Something went wrong. Please try again.');
+    const detail =
+      typeof data === 'object' && data !== null && 'detail' in data
+        ? data.detail
+        : undefined;
+
+    const message =
+      typeof detail === 'string'
+        ? detail
+        : Array.isArray(detail)
+          ? detail
+              .map((item: { msg?: string }) =>
+                item?.msg ?? 'Invalid input',
+              )
+              .join(', ')
+          : `Request failed (${response.status}). Please try again.`;
+
+    throw new Error(message);
   }
 
   return data as T;
 }
 
+/**
+ * Register a student or faculty account.
+ * Admin registration is intentionally not supported.
+ */
 export function registerUser(
   fullName: string,
   email: string,
   password: string,
   role: 'student' | 'faculty',
-) {
-  return request<AuthUser>('/register', {
-    full_name: fullName,
-    email,
-    password,
-    role,
+): Promise<AuthUser> {
+  return request<AuthUser>('/auth/register', {
+    body: {
+      full_name: fullName,
+      email,
+      password,
+      role,
+    },
   });
 }
 
-export function verifyEmailOTP(email: string, otp: string) {
-  return request<AuthUser>('/verify-otp', { email, otp });
+/**
+ * Verify the user's email using the OTP sent to their email address.
+ */
+export function verifyEmailOTP(
+  email: string,
+  otp: string,
+): Promise<AuthUser> {
+  return request<AuthUser>('/auth/verify-otp', {
+    body: { email, otp },
+  });
 }
 
-export function resendEmailOTP(email: string) {
-  return request<{ message: string }>('/resend-otp', { email });
+/**
+ * Request a replacement email verification OTP.
+ */
+export function resendEmailOTP(
+  email: string,
+): Promise<{ message: string }> {
+  return request<{ message: string }>('/auth/resend-otp', {
+    body: { email },
+  });
 }
 
-export function loginUser(email: string, password: string) {
-  return request<AuthResponse>('/login', { email, password });
+/**
+ * Log in and receive an access token.
+ */
+export function loginUser(
+  email: string,
+  password: string,
+): Promise<AuthResponse> {
+  return request<AuthResponse>('/auth/login', {
+    body: { email, password },
+  });
+}
+
+/**
+ * Get the currently authenticated user's profile.
+ */
+export function getCurrentUser(
+  accessToken: string,
+): Promise<AuthUser> {
+  return request<AuthUser>('/auth/me', {
+    method: 'GET',
+    token: accessToken,
+  });
+}
+
+/**
+ * Get verified faculty accounts that are awaiting admin approval.
+ * Requires an authenticated admin access token.
+ */
+export function getPendingFaculty(
+  accessToken: string,
+): Promise<AuthUser[]> {
+  return request<AuthUser[]>('/auth/pending-faculty', {
+    method: 'GET',
+    token: accessToken,
+  });
+}
+
+/**
+ * Approve a verified faculty account.
+ * Requires an authenticated admin access token.
+ */
+export function approveFaculty(
+  userId: number,
+  accessToken: string,
+): Promise<AuthUser> {
+  return request<AuthUser>(`/auth/approve-faculty/${userId}`, {
+    body: {},
+    token: accessToken,
+  });
 }

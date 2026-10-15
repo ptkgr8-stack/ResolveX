@@ -19,13 +19,16 @@ import {
 
 import {
   INITIAL_KPIS,
-  CURRENT_USER,
 } from './data/mockData';
 
 import {
   getIssues,
   updateIssueStatus,
 } from './services/issueApi';
+
+import {
+  getCurrentUser,
+} from './services/authApi';
 
 import { Navbar } from './components/layout/Navbar';
 import { LandingPage } from './components/landing/LandingPage';
@@ -41,6 +44,7 @@ import { CampusMapViewer } from './components/common/CampusMapViewer';
 import { IssueDetailsView } from './components/common/IssueDetailsView';
 import { AuthModal } from './components/auth/AuthModal';
 import { CampusAuthView } from './components/auth/CampusAuthView';
+import FacultyApprovalView from './components/admin/FacultyApprovalView';
 
 export default function App() {
   const [issues, setIssues] = useState<CampusIssue[]>([]);
@@ -67,8 +71,28 @@ export default function App() {
     }, 4500);
   };
 
-  // Fetch the latest issue records from FastAPI/PostgreSQL.
+  // Convert the backend user to the frontend profile.
+  const mapBackendUser = (
+    user: Awaited<ReturnType<typeof getCurrentUser>>,
+  ): UserProfile => ({
+    id: String(user.id),
+    name: user.full_name,
+    email: user.email,
+    role: user.role as UserProfile['role'],
+    avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(
+      user.full_name,
+    )}&background=0a1e42&color=fff`,
+    reportsCount: 0,
+  });
+
+  // Fetch issues only for an authenticated user.
   const refreshIssues = useCallback(async () => {
+    if (!currentUser) {
+      setIssues([]);
+      setIssuesLoading(false);
+      return;
+    }
+
     try {
       const data = await getIssues();
       setIssues(data as unknown as CampusIssue[]);
@@ -76,18 +100,84 @@ export default function App() {
       console.error('Failed to load campus issues:', error);
 
       showToast(
-        'Could not load issues from the server. Check your login and backend.'
+        error instanceof Error
+          ? error.message
+          : 'Could not load issues. Check your login and backend.',
       );
     } finally {
       setIssuesLoading(false);
     }
+  }, [currentUser]);
+
+  // Restore the session from a saved token after a page refresh.
+  useEffect(() => {
+    let cancelled = false;
+
+    const restoreSession = async () => {
+      const token =
+        localStorage.getItem('resolvex_access_token') ??
+        sessionStorage.getItem('resolvex_access_token');
+
+      if (!token) {
+        if (!cancelled) setIssuesLoading(false);
+        return;
+      }
+
+      try {
+        const user = await getCurrentUser(token);
+
+        if (cancelled) return;
+
+        if (
+          !user.is_active ||
+          !user.is_email_verified ||
+          (user.role === 'faculty' && !user.is_approved)
+        ) {
+          localStorage.removeItem('resolvex_access_token');
+          sessionStorage.removeItem('resolvex_access_token');
+          setIssuesLoading(false);
+          return;
+        }
+
+        setCurrentUser(mapBackendUser(user));
+
+        setCurrentView(
+          user.role === 'admin'
+            ? 'admin-dashboard'
+            : user.role === 'faculty'
+              ? 'issue-management'
+              : 'student-dashboard',
+        );
+      } catch (error) {
+        if (cancelled) return;
+
+        localStorage.removeItem('resolvex_access_token');
+        sessionStorage.removeItem('resolvex_access_token');
+
+        console.warn('Could not restore ResolveX session:', error);
+      } finally {
+        if (!cancelled) setIssuesLoading(false);
+      }
+    };
+
+    void restoreSession();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
+  // Refresh issues when the authenticated user changes.
   useEffect(() => {
-    void refreshIssues();
-  }, [refreshIssues]);
+    if (currentUser) {
+      void refreshIssues();
+    } else {
+      setIssues([]);
+      setIssuesLoading(false);
+    }
+  }, [currentUser, refreshIssues]);
 
-  // Called after ReportIssueView successfully creates an issue.
+  // Called after a new issue is submitted.
   const handleIssueCreated = (newIssue: CampusIssue) => {
     setIssues((previous) => [
       newIssue,
@@ -98,34 +188,40 @@ export default function App() {
     setCurrentView('issue-details');
 
     showToast(
-      `Issue ${newIssue.trackingNumber ?? newIssue.id} submitted successfully.`
+      `Issue ${newIssue.trackingNumber ?? newIssue.id} submitted successfully.`,
     );
 
     void refreshIssues();
   };
 
-  // Save the status through the API before updating the selected issue.
+  // Persist an issue status change through the backend.
   const handleUpdateIssueStatus = async (
     issueId: string,
-    status: IssueStatus
+    status: IssueStatus,
   ) => {
+    if (
+      currentUser?.role !== 'admin' &&
+      currentUser?.role !== 'faculty'
+    ) {
+      showToast('You are not authorized to update issue statuses.');
+      return;
+    }
+
     try {
       const savedIssue = await updateIssueStatus(
         Number(issueId),
-        String(status)
+        String(status),
       );
 
-      // Refresh the issue list from the server after a successful save.
       await refreshIssues();
 
-      // Keep the currently selected issue in sync with the saved status.
       setSelectedIssue((previous) =>
         previous && String(previous.id) === String(savedIssue.id)
           ? {
               ...previous,
               status: savedIssue.status as IssueStatus,
             }
-          : previous
+          : previous,
       );
 
       showToast(`Ticket status saved: ${savedIssue.status}`);
@@ -135,18 +231,17 @@ export default function App() {
       showToast(
         error instanceof Error
           ? error.message
-          : 'Could not update the issue status.'
+          : 'Could not update the issue status.',
       );
     }
   };
 
   const handleScheduleInspection = (alert: PredictiveAlert) => {
     showToast(
-      `Preventive inspection work order created for ${alert.targetLocation}! Assigned to ${alert.department}`
+      `Preventive inspection work order created for ${alert.targetLocation}! Assigned to ${alert.department}`,
     );
   };
 
-  // Role switching opens authentication instead of using mock accounts.
   const handleSwitchRole = (role: 'student' | 'admin') => {
     setAuthModalRole(role);
     setAuthModalMode('login');
@@ -160,14 +255,74 @@ export default function App() {
   const handleLoginSuccess = (user: UserProfile) => {
     setCurrentUser(user);
     setIsAuthModalOpen(false);
+    setSelectedIssue(null);
 
     setCurrentView(
-      user.role === 'admin' ? 'admin-dashboard' : 'student-dashboard'
+      user.role === 'admin'
+        ? 'admin-dashboard'
+        : user.role === 'faculty'
+          ? 'issue-management'
+          : 'student-dashboard',
     );
 
     showToast(`Welcome to ResolveX, ${user.name}!`);
+    setIssuesLoading(true);
     void refreshIssues();
   };
+
+  const handleLogout = () => {
+    localStorage.removeItem('resolvex_access_token');
+    sessionStorage.removeItem('resolvex_access_token');
+
+    setCurrentUser(null);
+    setSelectedIssue(null);
+    setCurrentView('landing');
+    setIsAuthModalOpen(false);
+    setIssues([]);
+    setIssuesLoading(false);
+
+    showToast('Signed out of ResolveX.');
+  };
+
+  // Prevent non-admin users from opening admin-only pages.
+  const adminOnlyViews = [
+    'admin-dashboard',
+    'predictive-insights',
+    'campus-analytics',
+    'departments',
+  ];
+
+  const staffViews = [
+    'issue-management',
+    'campus-map',
+  ];
+
+  useEffect(() => {
+    if (!currentUser) return;
+
+    if (
+      adminOnlyViews.includes(currentView) &&
+      currentUser.role !== 'admin'
+    ) {
+      setCurrentView(
+        currentUser.role === 'faculty'
+          ? 'issue-management'
+          : 'student-dashboard',
+      );
+
+      showToast('You are not authorized to access that page.');
+      return;
+    }
+
+    if (
+      staffViews.includes(currentView) &&
+      currentUser.role !== 'admin' &&
+      currentUser.role !== 'faculty'
+    ) {
+      setCurrentView('student-dashboard');
+      showToast('You are not authorized to access that page.');
+    }
+  }, [currentUser, currentView]);
 
   return (
     <div className="min-h-screen bg-slate-100/70 text-slate-900 flex flex-col font-sans selection:bg-[#0b1f44] selection:text-white">
@@ -184,16 +339,7 @@ export default function App() {
           setAuthModalMode(mode || 'login');
           setIsAuthModalOpen(true);
         }}
-        onLogout={() => {
-          setCurrentUser(null);
-          setCurrentView('landing');
-          setSelectedIssue(null);
-
-          localStorage.removeItem('resolvex_access_token');
-          sessionStorage.removeItem('resolvex_access_token');
-
-          showToast('Signed out of ResolveX.');
-        }}
+        onLogout={handleLogout}
         onSwitchRole={handleSwitchRole}
       />
 
@@ -224,7 +370,10 @@ export default function App() {
             issue={selectedIssue}
             onBack={() => setSelectedIssue(null)}
             onUpdateStatus={handleUpdateIssueStatus}
-            isAdmin={currentUser?.role === 'admin'}
+            isAdmin={
+              currentUser?.role === 'admin' ||
+              currentUser?.role === 'faculty'
+            }
           />
         ) : (
           <>
@@ -257,23 +406,14 @@ export default function App() {
               <CampusAuthView
                 mode={currentView === 'register' ? 'register' : 'login'}
                 onSwitchMode={(mode) => setCurrentView(mode)}
-                onLoginSuccess={(user) => {
-                  setCurrentUser(user);
-                  setCurrentView(
-                    user.role === 'admin'
-                      ? 'admin-dashboard'
-                      : 'student-dashboard'
-                  );
-                  showToast(`Welcome to ResolveX, ${user.name}!`);
-                  void refreshIssues();
-                }}
+                onLoginSuccess={handleLoginSuccess}
                 onClose={() => setCurrentView('landing')}
               />
             )}
 
-            {currentView === 'student-dashboard' && (
+            {currentView === 'student-dashboard' && currentUser && (
               <StudentDashboard
-                user={currentUser || CURRENT_USER}
+                user={currentUser}
                 issues={issues}
                 onNavigateToReport={() => setCurrentView('report-issue')}
                 onNavigateToMyIssues={() => setCurrentView('my-issues')}
@@ -281,97 +421,125 @@ export default function App() {
               />
             )}
 
-            {currentView === 'report-issue' && (
+            {currentView === 'report-issue' && currentUser && (
               <ReportIssueView
                 existingIssues={issues}
                 onSubmitNewIssue={handleIssueCreated}
                 onCancel={() =>
                   setCurrentView(
-                    currentUser?.role === 'admin'
+                    currentUser.role === 'admin'
                       ? 'admin-dashboard'
-                      : 'student-dashboard'
+                      : currentUser.role === 'faculty'
+                        ? 'issue-management'
+                        : 'student-dashboard',
                   )
                 }
               />
-            )}       
-{currentView === 'my-issues' && (
-  <MyIssuesView
-    issues={issues}
-    onSelectIssue={(issue) => setSelectedIssue(issue)}
-    onNavigateToReport={() => setCurrentView('report-issue')}
-    userEmail={currentUser?.email ?? ''}
-  />
-)}
-            {currentView === 'admin-dashboard' && (
-              <AdminDashboard
-                issues={issues}
-                kpis={kpis}
-                onNavigateToIssues={() => setCurrentView('issue-management')}
-                onNavigateToMap={() => setCurrentView('campus-map')}
-                onNavigateToPredictions={() =>
-                  setCurrentView('predictive-insights')
-                }
-                onNavigateToDepartments={() => setCurrentView('departments')}
-                onSelectIssue={(issue) => setSelectedIssue(issue)}
-              />
             )}
 
-            {currentView === 'issue-management' && (
-              <IssueManagement
-                issues={issues}
-                onSelectIssue={(issue) => setSelectedIssue(issue)}
-                onUpdateIssueStatus={handleUpdateIssueStatus}
-              />
-            )}
+            {currentView === 'my-issues' &&
+              currentUser?.role === 'student' && (
+                <MyIssuesView
+                  issues={issues}
+                  onSelectIssue={(issue) => setSelectedIssue(issue)}
+                  onNavigateToReport={() => setCurrentView('report-issue')}
+                  userEmail={currentUser.email}
+                />
+              )}
 
-            {currentView === 'campus-map' && (
-              <div className="space-y-6">
-                <div className="bg-white rounded-xl border border-slate-200/90 p-5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div>
-                    <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
-                      Campus Facilities GIS &amp; Incident Map
-                    </h1>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Explore building zones, active maintenance requests, and spatial density clusters
-                    </p>
+            {currentView === 'admin-dashboard' &&
+              currentUser?.role === 'admin' && (
+                <>
+                  <AdminDashboard
+                    issues={issues}
+                    kpis={kpis}
+                    onNavigateToIssues={() => setCurrentView('issue-management')}
+                    onNavigateToMap={() => setCurrentView('campus-map')}
+                    onNavigateToPredictions={() =>
+                      setCurrentView('predictive-insights')
+                    }
+                    onNavigateToDepartments={() =>
+                      setCurrentView('departments')
+                    }
+                    onSelectIssue={(issue) => setSelectedIssue(issue)}
+                  />
+
+                  <div className="mt-8">
+                    <FacultyApprovalView
+                      accessToken={
+                        localStorage.getItem('resolvex_access_token') ??
+                        sessionStorage.getItem('resolvex_access_token') ??
+                        ''
+                      }
+                    />
+                  </div>
+                </>
+              )}
+
+            {currentView === 'issue-management' &&
+              (currentUser?.role === 'admin' ||
+                currentUser?.role === 'faculty') && (
+                <IssueManagement
+                  issues={issues}
+                  onSelectIssue={(issue) => setSelectedIssue(issue)}
+                  onUpdateIssueStatus={handleUpdateIssueStatus}
+                />
+              )}
+
+            {currentView === 'campus-map' &&
+              (currentUser?.role === 'admin' ||
+                currentUser?.role === 'faculty') && (
+                <div className="space-y-6">
+                  <div className="bg-white rounded-xl border border-slate-200/90 p-5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                      <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
+                        Campus Facilities GIS &amp; Incident Map
+                      </h1>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Explore building zones, active maintenance requests,
+                        and spatial density clusters
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setCurrentView('report-issue')}
+                      className="inline-flex items-center gap-1.5 bg-[#0b1f44] hover:bg-[#0f2a5e] text-white font-semibold px-3.5 py-2 rounded-lg text-xs self-start sm:self-auto"
+                    >
+                      + Report Issue at Location
+                    </button>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setCurrentView('report-issue')}
-                    className="inline-flex items-center gap-1.5 bg-[#0b1f44] hover:bg-[#0f2a5e] text-white font-semibold px-3.5 py-2 rounded-lg text-xs self-start sm:self-auto"
-                  >
-                    + Report Issue at Location
-                  </button>
+                  <div className="rounded-xl border border-slate-200/90 overflow-hidden shadow-sm">
+                    <CampusMapViewer
+                      issues={issues}
+                      showHeatmapDefault={true}
+                      onViewIssueDetails={(issue) => setSelectedIssue(issue)}
+                    />
+                  </div>
                 </div>
+              )}
 
-                <div className="rounded-xl border border-slate-200/90 overflow-hidden shadow-sm">
-                  <CampusMapViewer
-                    issues={issues}
-                    showHeatmapDefault={true}
-                    onViewIssueDetails={(issue) => setSelectedIssue(issue)}
-                  />
-                </div>
-              </div>
-            )}
+            {currentView === 'predictive-insights' &&
+              currentUser?.role === 'admin' && (
+                <PredictiveInsightsView
+                  onScheduleInspection={handleScheduleInspection}
+                />
+              )}
 
-            {currentView === 'predictive-insights' && (
-              <PredictiveInsightsView
-                onScheduleInspection={handleScheduleInspection}
-              />
-            )}
+            {currentView === 'campus-analytics' &&
+              currentUser?.role === 'admin' && (
+                <CampusAnalyticsView issues={issues} />
+              )}
 
-            {currentView === 'campus-analytics' && (
-              <CampusAnalyticsView issues={issues} />
-            )}
-
-            {currentView === 'departments' && (
-              <DepartmentManagement
-                onFilterByDepartment={() =>
-                  setCurrentView('issue-management')
-                }
-              />
-            )}
+            {currentView === 'departments' &&
+              currentUser?.role === 'admin' && (
+                <DepartmentManagement
+                  onFilterByDepartment={() =>
+                    setCurrentView('issue-management')
+                  }
+                />
+              )}
 
             {issuesLoading && currentView !== 'landing' && (
               <p className="text-xs text-slate-500 mt-4">
@@ -424,7 +592,7 @@ export default function App() {
 
             <div className="flex flex-col sm:flex-row items-center justify-between gap-3 text-slate-400 text-[11px]">
               <div>© 2026 ResolveX Infrastructure Intelligence.</div>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3">
                 <span>Telemetry Grid v4.2</span>
                 <span>•</span>
                 <span>10 Campus Zones Monitored</span>
