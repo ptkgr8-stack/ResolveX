@@ -123,7 +123,7 @@ export interface UserProfile {
   id: string;
   name: string;
   email: string;
-  role: 'student' | 'admin' | 'technician';
+  role: 'student' | 'faculty' | 'admin' | 'technician';
   department?: string;
   avatar: string;
   studentId?: string;

@@ -1,16 +1,28 @@
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from typing import Literal
+
+from pydantic import BaseModel, EmailStr, Field
 
 
 class UserRegister(BaseModel):
     full_name: str = Field(min_length=2, max_length=150)
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
+    role: Literal["student", "faculty"] = "student"
 
 
 class UserLogin(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=1, max_length=128)
+    password: str
+
+
+class VerifyOTP(BaseModel):
+    email: EmailStr
+    otp: str = Field(pattern=r"^\d{6}$")
+
+
+class ResendOTP(BaseModel):
+    email: EmailStr
 
 
 class UserResponse(BaseModel):
@@ -19,8 +31,10 @@ class UserResponse(BaseModel):
     email: EmailStr
     role: str
     is_active: bool
+    is_email_verified: bool
+    is_approved: bool
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = {"from_attributes": True}
 
 
 class TokenResponse(BaseModel):

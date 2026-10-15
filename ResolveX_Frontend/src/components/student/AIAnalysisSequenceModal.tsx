@@ -88,7 +88,7 @@ export const AIAnalysisSequenceModal: React.FC<AIAnalysisSequenceModalProps> = (
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="font-bold text-base text-white">
-                  CampusPulse AI Neural Processing
+                  ResolveX AI Analysis
                 </h3>
                 <span className="text-[11px] font-mono font-semibold px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/40">
                   {isCompleted ? 'EVALUATION COMPLETE' : 'PROCESSING PIPELINE'}
@@ -111,10 +111,10 @@ export const AIAnalysisSequenceModal: React.FC<AIAnalysisSequenceModalProps> = (
                   <Loader2 className="w-6 h-6 animate-spin" />
                 </div>
                 <h4 className="text-base font-bold text-slate-800">
-                  Running Campus Issue Intelligence
+                  Running ResolveX AI Analysis
                 </h4>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Synthesizing report signals against campus digital twin database...
+                  Synthesizing report signals against ResolveX digital twin database...
                 </p>
               </div>
 

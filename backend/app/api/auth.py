@@ -1,122 +1,101 @@
 
+import hashlib
+import hmac
+import os
+import secrets
+from dotenv import load_dotenv
+from datetime import datetime, timedelta, timezone
+
+import jwt
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jwt import InvalidTokenError
+from pwdlib import PasswordHash
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import (
-    JWT_ALGORITHM,
-    JWT_SECRET_KEY,
-    create_access_token,
-    hash_password,
-    verify_password,
-)
+from app.core.email_service import send_otp_email
 from app.models.user import User
 from app.schemas.auth import (
+    ResendOTP,
     TokenResponse,
     UserLogin,
     UserRegister,
     UserResponse,
+    VerifyOTP,
 )
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
-bearer_scheme = HTTPBearer()
+
+password_hash = PasswordHash.recommended()
+bearer_scheme = HTTPBearer(auto_error=False)
+
+from pathlib import Path
+
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+JWT_ALGORITHM = "HS256"
+
+OTP_EXPIRY_MINUTES = 5
+OTP_RESEND_COOLDOWN_SECONDS = 60
+OTP_MAX_ATTEMPTS = 5
 
 
-@router.post(
-    "/register",
-    response_model=UserResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-def register_user(
-    user_data: UserRegister,
-    db: Session = Depends(get_db),
-):
-    email = str(user_data.email).strip().lower()
-
-    existing_user = db.query(User).filter(User.email == email).first()
-    if existing_user:
+def _secret_key() -> str:
+    if not JWT_SECRET_KEY:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="An account with this email already exists.",
+            status_code=500,
+            detail="JWT_SECRET_KEY is missing from backend/.env",
         )
+    return JWT_SECRET_KEY
 
-    user = User(
-        full_name=user_data.full_name.strip(),
-        email=email,
-        hashed_password=hash_password(user_data.password),
-        role="student",
+
+def _hash_otp(otp: str) -> str:
+    return hmac.new(
+        _secret_key().encode(),
+        otp.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _create_access_token(user: User) -> str:
+    now = datetime.now(timezone.utc)
+
+    payload = {
+        "sub": str(user.id),
+        "role": user.role,
+        "iat": now,
+        "exp": now + timedelta(minutes=30),
+    }
+
+    return jwt.encode(
+        payload,
+        _secret_key(),
+        algorithm=JWT_ALGORITHM,
     )
 
-    db.add(user)
-    try:
-        db.commit()
-        db.refresh(user)
-    except Exception:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Could not create the account. The email may already be registered.",
-        )
 
-    return user
-
-
-@router.post("/login", response_model=TokenResponse)
-def login_user(
-    credentials: UserLogin,
+def _get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: Session = Depends(get_db),
-):
-    email = str(credentials.email).strip().lower()
-    user = db.query(User).filter(User.email == email).first()
-
-    if not user or not verify_password(
-        credentials.password,
-        user.hashed_password,
-    ):
+) -> User:
+    if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password.",
+            detail="Authentication required",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This account has been disabled.",
-        )
-
-    token = create_access_token(str(user.id))
-
-    return {
-        "access_token": token,
-        "token_type": "bearer",
-        "user": user,
-    }
-
-
-@router.get("/me", response_model=UserResponse)
-def get_my_account(
-    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
-    db: Session = Depends(get_db),
-):
-    token = credentials.credentials
-
     try:
-        import jwt
-
         payload = jwt.decode(
-            token,
-            JWT_SECRET_KEY,
+            credentials.credentials,
+            _secret_key(),
             algorithms=[JWT_ALGORITHM],
         )
-        subject = payload.get("sub")
-        user_id = int(subject)
-    except (InvalidTokenError, TypeError, ValueError):
+        user_id = int(payload.get("sub", ""))
+    except (jwt.InvalidTokenError, ValueError, TypeError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token.",
+            detail="Invalid or expired access token",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -125,8 +104,247 @@ def get_my_account(
     if not user or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Account not found or disabled.",
-            headers={"WWW-Authenticate": "Bearer"},
+            detail="User not found or inactive",
         )
 
     return user
+
+
+def _generate_otp() -> str:
+    return f"{secrets.randbelow(900000) + 100000:06d}"
+
+
+def _normalise_email(email: str) -> str:
+    return email.strip().lower()
+
+
+def _utc(value: datetime) -> datetime:
+    # PostgreSQL normally returns aware timestamps for TIMESTAMPTZ.
+    # Handle naive timestamps defensively.
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _send_new_otp(user: User, db: Session) -> None:
+    otp = _generate_otp()
+    now = datetime.now(timezone.utc)
+
+    user.otp_hash = _hash_otp(otp)
+    user.otp_expires_at = now + timedelta(minutes=OTP_EXPIRY_MINUTES)
+    user.otp_attempts = 0
+    user.otp_last_sent_at = now
+
+    db.commit()
+
+    try:
+        send_otp_email(user.email, otp)
+    except Exception:
+        # Keep the account pending, but allow an immediate retry.
+        user.otp_hash = None
+        user.otp_expires_at = None
+        user.otp_last_sent_at = None
+        db.commit()
+
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "We couldn't send the verification email. "
+                "Check the Gmail SMTP settings and try again."
+            ),
+        )
+
+
+@router.post("/register", response_model=UserResponse,
+             status_code=status.HTTP_201_CREATED)
+def register(payload: UserRegister, db: Session = Depends(get_db)):
+    email = _normalise_email(str(payload.email))
+
+    existing = db.query(User).filter(User.email == email).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists",
+        )
+
+    # Only student and faculty roles are accepted by the schema.
+    # Never allow public self-registration as admin or technician.
+    role = payload.role
+
+    user = User(
+        full_name=payload.full_name.strip(),
+        email=email,
+        hashed_password=password_hash.hash(payload.password),
+        role=role,
+        is_active=True,
+        is_email_verified=False,
+        is_approved=(role == "student"),
+        otp_attempts=0,
+    )
+
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    _send_new_otp(user, db)
+
+    return user
+
+
+@router.post("/verify-otp", response_model=UserResponse)
+def verify_otp(payload: VerifyOTP, db: Session = Depends(get_db)):
+    email = _normalise_email(str(payload.email))
+    user = db.query(User).filter(User.email == email).first()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    if user.is_email_verified:
+        return user
+
+    if not user.otp_hash or not user.otp_expires_at:
+        raise HTTPException(
+            status_code=400,
+            detail="No active verification code. Request a new code.",
+        )
+
+    if user.otp_attempts >= OTP_MAX_ATTEMPTS:
+        user.otp_hash = None
+        user.otp_expires_at = None
+        db.commit()
+        raise HTTPException(
+            status_code=429,
+            detail="Too many incorrect attempts. Request a new code.",
+        )
+
+    if datetime.now(timezone.utc) >= _utc(user.otp_expires_at):
+        user.otp_hash = None
+        user.otp_expires_at = None
+        db.commit()
+        raise HTTPException(
+            status_code=400,
+            detail="Verification code expired. Request a new code.",
+        )
+
+    if not hmac.compare_digest(user.otp_hash, _hash_otp(payload.otp)):
+        user.otp_attempts += 1
+        db.commit()
+        remaining = max(OTP_MAX_ATTEMPTS - user.otp_attempts, 0)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Incorrect verification code. Attempts remaining: {remaining}",
+        )
+
+    user.is_email_verified = True
+    user.otp_hash = None
+    user.otp_expires_at = None
+    user.otp_attempts = 0
+    db.commit()
+    db.refresh(user)
+
+    return user
+
+
+@router.post("/resend-otp")
+def resend_otp(payload: ResendOTP, db: Session = Depends(get_db)):
+    email = _normalise_email(str(payload.email))
+    user = db.query(User).filter(User.email == email).first()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    if user.is_email_verified:
+        raise HTTPException(
+            status_code=400,
+            detail="This email is already verified. Please log in.",
+        )
+
+    if user.otp_last_sent_at:
+        elapsed = (
+            datetime.now(timezone.utc) - _utc(user.otp_last_sent_at)
+        ).total_seconds()
+
+        if elapsed < OTP_RESEND_COOLDOWN_SECONDS:
+            wait = max(1, int(OTP_RESEND_COOLDOWN_SECONDS - elapsed))
+            raise HTTPException(
+                status_code=429,
+                detail=f"Please wait {wait} seconds before requesting another code.",
+            )
+
+    _send_new_otp(user, db)
+
+    return {"message": "A new verification code has been sent to your email."}
+
+
+@router.post("/login", response_model=TokenResponse)
+def login(payload: UserLogin, db: Session = Depends(get_db)):
+    email = _normalise_email(str(payload.email))
+    user = db.query(User).filter(User.email == email).first()
+
+    if not user or not password_hash.verify(
+        payload.password, user.hashed_password
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+        )
+
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="This account is inactive")
+
+    if not user.is_email_verified:
+        raise HTTPException(
+            status_code=403,
+            detail="Please verify your email before logging in.",
+        )
+
+    if user.role == "faculty" and not user.is_approved:
+        raise HTTPException(
+            status_code=403,
+            detail="Your faculty account is awaiting admin approval.",
+        )
+
+    return TokenResponse(
+        access_token=_create_access_token(user),
+        token_type="bearer",
+        user=user,
+    )
+
+
+@router.get("/me", response_model=UserResponse)
+def get_me(current_user: User = Depends(_get_current_user)):
+    return current_user
+
+
+@router.post("/approve-faculty/{user_id}", response_model=UserResponse)
+def approve_faculty(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(_get_current_user),
+):
+    # Approval is available only to an existing, authenticated admin.
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only an admin can approve faculty accounts",
+        )
+
+    faculty = db.query(User).filter(User.id == user_id).first()
+
+    if not faculty or faculty.role != "faculty":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Faculty account not found",
+        )
+
+    if not faculty.is_email_verified:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The faculty member must verify their email first",
+        )
+
+    faculty.is_approved = True
+    db.commit()
+    db.refresh(faculty)
+
+    return faculty
